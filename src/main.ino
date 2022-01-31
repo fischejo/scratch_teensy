@@ -1,4 +1,3 @@
-
 #include <micro_ros_arduino.h>
 
 #include <stdio.h>
@@ -7,63 +6,79 @@
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 
-#include <Wire.h>
-
-#include <Adafruit_Sensor.h>
-#include <Adafruit_BNO055.h>
-
-#include <SmartButton.h>
+#include <nav_msgs/msg/odometry.h>
+#include <geometry_msgs/msg/twist.h>
 
 #include <PIDController.h>
 
-#include "display.h"
+#include "battery.h"
+#include "panel.h"
 #include "odrive.h"
 #include "state.h"
+#include "imu.h"
+#include "time.h"
+
 
 #define GPIO_COMPUTER 23
-#define GPIO_BUTTON 3
-#define GPIO_LED 2
 
-#define SPIN_TIME RCL_MS_TO_NS(100)
+#define SPIN_TIME RCL_MS_TO_NS(10)
+#define PUBLISH_TIME RCL_MS_TO_NS(100)
 
 #define Log Serial2
 
 #define RCCHECK(fn)     { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){Log.println("RCCHECK failed");}}
 
-#define MIN_VOLTAGE 36
-#define MAX_VOLTAGE 42
-#define LOW_VOLTAGE 37
-
 #define RUNNING_ANGLE 25
+
 
 rclc_executor_t executor;
 rclc_support_t support;
 rcl_allocator_t allocator;
 rcl_timer_t motion_timer;
-bool ros_initialized = false;
+rcl_timer_t publish_timer;
+rcl_node_t node;
+
+rcl_publisher_t odom_publisher;
+rcl_publisher_t imu_publisher;
+rcl_publisher_t battery_publisher;
+rcl_subscription_t twist_subscriber;
+
+//rcl_publisher_t state_publisher;
+//rcl_subscription_t config_subscriber;
+
+nav_msgs__msg__Odometry odom_msg;
+geometry_msgs__msg__Twist twist_msg;
 
 
-Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire2);
-sensors_event_t imu_vector;
+Imu _imu;
+Panel panel;
+Battery battery;
+
 odrive_state_t odrive_state;
-
-using namespace smartbutton;
-SmartButton button(3, SmartButton::InputType::NORMAL_HIGH);
 
 control_state_t state = DISCONNECTED;
 control_error_t error;
-float battery_level;
+
 position_state_t position_state = UNKNOWN;
 double position = 0;
-bool low_voltage_detected = false;
+
 PIDController pid_cog;
 PIDController pid_balance;
+unsigned long prev_twist_msg_time = 0;
 
 void motion_timer_callback(rcl_timer_t * timer, int64_t last_call_time) {
+    //imu.getEuler();
+    
 
-   // Log.println("whuhu");
-   // bno.getEvent(&imu_vector);
+    if(((millis() - prev_twist_msg_time) >= 200))  {
+        // TODO no twist messages from PC...deal with it
+    }
+
     //Log.println(imu_vector.orientation.z); 
+    
+    //twist_msg.linear.x = 0.0;
+    //twist_msg.linear.y = 0.0;
+    //twist_msg.angular.z = 0.0;    
 
     position += odrive_state.estimated_left_velocity*last_call_time/1000;
 
@@ -71,10 +86,47 @@ void motion_timer_callback(rcl_timer_t * timer, int64_t last_call_time) {
 
     double velocity = pid_balance.compute(cog_angle);
     //odrive_set_velocity(velocity, velocity);
+}
+
+
+void twist_callback(const void * msgin) 
+{
+    prev_twist_msg_time = millis();
+}
+
+
+void publish_timer_callback(rcl_timer_t * timer, int64_t last_call_time) {
+    // odom
+    //odom_msg.header.stamp.sec = time_stamp.tv_sec;
+    //odom_msg.header.stamp.nanosec = time_stamp.tv_nsec;
+
+    // TODO check if sending is successful
+    rcl_publish(&imu_publisher, _imu.getMsg(), NULL);
+    rcl_publish(&battery_publisher, battery.getMsg(), NULL);
+    //rcl_publish(&odom_publisher, &odom_msg, NULL);
+}
+
+
+void request_odrive_status() {
     
+    
+    // get additional information from the Odrive
+    odrive_update(&odrive_state);  
+    
+    if(odrive_state.motor_error) {
+        set_error(ODRIVE_MOTOR_ERROR);
+        return;
+    }
 
- 
+    if(odrive_state.encoder_error) {
+        set_error(ODRIVE_ENCODER_ERROR);
+        return;
+    }
 
+    battery.setVoltage(odrive_state.voltage);
+    if(battery.isCritical()) {
+        set_state(LOW_BATTERY);
+    }
 }
 
 void ros_init() {
@@ -86,23 +138,67 @@ void ros_init() {
     if(rclc_support_init(&support, 0, NULL, &allocator) != RCL_RET_OK)
         goto err;
 
-    // create executor
-    if(rclc_executor_init(&executor, &support.context, 1, &allocator) != RCL_RET_OK)
+    // create node
+    if(rclc_node_init_default(&node, "teensy_node", "", &support) != RCL_RET_OK) 
         goto err;
-    
+
+    // create odometry publisher
+    if( rclc_publisher_init_best_effort(&odom_publisher, &node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry), "odom/unfiltered" ) != RCL_RET_OK) 
+        goto err;
+
+    // create imu publisher
+    if(rclc_publisher_init_best_effort(&imu_publisher, &node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu), "imu/data") != RCL_RET_OK)
+        goto err;
+
+    // create battery publisher
+    if(rclc_publisher_init_default(&battery_publisher, &node, 
+            ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, BatteryState), "battery") != RCL_RET_OK)
+        goto err;
+
+    // create twist command subscriber
+    if(rclc_subscription_init_best_effort(&twist_subscriber, &node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), "cmd_vel") != RCL_RET_OK)
+        goto err;
+
+    // create config subscriber
+    //if(rclc_subscription_init_best_effort(&config_subscriber, &node,
+    //        ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), "cmd_vel") != RCL_RET_OK)
+    //    goto err;
+
     // init motion
     if(rclc_timer_init_default(&motion_timer, &support, SPIN_TIME, motion_timer_callback) != RCL_RET_OK)
+        goto err;
+
+    if(rclc_timer_init_default(&publish_timer, &support, PUBLISH_TIME, publish_timer_callback) != RCL_RET_OK)
+        goto err;        
+
+    // create executor
+    if(rclc_executor_init(&executor, &support.context, 2, &allocator) != RCL_RET_OK)
+        goto err;
+    
+    if(rclc_executor_add_subscription(&executor, &twist_subscriber, &twist_msg, &twist_callback, 
+            ON_NEW_DATA) != RCL_RET_OK)
         goto err;
 
     if(rclc_executor_add_timer(&executor, &motion_timer) != RCL_RET_OK)
         goto err;
 
+    if(rclc_executor_add_timer(&executor, &publish_timer) != RCL_RET_OK)
+        goto err;
+
+    if(!syncTime())
+        goto err;
+
+    set_state(IDLE);
     return;
 err:
     set_error(ROS_INIT);
 }
 
 void ros_deinit() {
+    set_state(DISCONNECTED);
     rcl_timer_fini(&motion_timer);
     rclc_executor_fini(&executor);
     rclc_support_fini(&support);
@@ -128,63 +224,22 @@ void button_clicked(SmartButton *button, SmartButton::Event event, int clickCoun
 
 
 
-void request_odrive_status() {
-    static unsigned long prev_low_voltage_time;
-    
-    // get additional information from the Odrive
-    odrive_update(&odrive_state);  
-    
-    if(odrive_state.motor_error) {
-        set_error(ODRIVE_MOTOR_ERROR);
-        return;
-    }
-
-    if(odrive_state.encoder_error) {
-        set_error(ODRIVE_ENCODER_ERROR);
-        return;
-    }
-
-    if(odrive_state.voltage > 0 ) {
-        if(odrive_state.voltage <= LOW_VOLTAGE) {
-            if(!low_voltage_detected) {
-                prev_low_voltage_time = millis(); 
-                low_voltage_detected = true;
-            }
-            if(millis() - prev_low_voltage_time >= 1000) {
-                set_state(LOW_BATTERY);
-            }
-        } else {
-            low_voltage_detected = false;
-        }
-        battery_level = (float) (odrive_state.voltage - MIN_VOLTAGE) / (float) (MAX_VOLTAGE - MIN_VOLTAGE);
-    }
-}
-
 void setup() {
     Log.begin(9600);
+    set_state(INIT);
 
     // init ros communication
     set_microros_transports();
 
-    set_state(INIT);
-
-    // init button
-    pinMode(GPIO_LED, OUTPUT);
-    digitalWrite(GPIO_LED, LOW);
-    pinMode(GPIO_BUTTON, INPUT_PULLUP);
-    button.begin(button_clicked);
-
-    // init display
-    //if(!display_init()) {
-    //     Log.println("Failed to init display");
-    //}
+    // init panel
+    panel.begin(button_clicked);
 
     // power computer on
     pinMode(GPIO_COMPUTER, OUTPUT);
     digitalWrite(GPIO_COMPUTER, HIGH);
     
     // init imu
-    if (!bno.begin()) {
+    if (!_imu.begin()) {
         set_error(IMU_INIT);
     }
 
@@ -218,25 +273,20 @@ void set_state(control_state_t new_state) {
                 Log.println("State: DISCONNECTED");
                 odrive_set_velocity(0,0);
                 odrive_stop();
-                analogWrite(GPIO_LED, 0);
                 break;
             case IDLE:
                 Log.println("State: IDLE");
-                //digitalWrite(GPIO_LED, LOW);
-                analogWrite(GPIO_LED, 50);
                 odrive_set_velocity(0,0);
                 odrive_stop();
                 break;
             case RUNNING:
                 Log.println("State: RUNNING");
-                analogWrite(GPIO_LED, 255);
                 odrive_set_velocity(0,0);
                 odrive_start();
                 break;
             case LOW_BATTERY:
                 Log.println("State: LOW BATTERY");
                 odrive_set_velocity(0,0);
-                analogWrite(GPIO_LED, 50);
                 odrive_stop();
                 digitalWrite(GPIO_COMPUTER, LOW);
                 break;
@@ -288,25 +338,20 @@ void loop() {
     if (millis() - prev_connect_test_time >= 10) {
         prev_connect_test_time = millis(); 
         
+        panel.update(state, battery.getLevel());
         request_odrive_status();
-        //display_show_state_screen();
-
-        // service the power button
-        SmartButton::service();
 
         // reconnect if agent got disconnected or haven't at all
         rmw_ret_t ping = rmw_uros_ping_agent(10,2);
         if (RMW_RET_OK == ping) { 
             if (state == DISCONNECTED) {
                 ros_init();
-                set_state(IDLE);
             }
-        } else if (state != DISCONNECTED) {
-            set_state(DISCONNECTED);
+        } else if (state != DISCONNECTED) {            
             ros_deinit();
         }
     }
-    delay(10);
+
     if (state != DISCONNECTED ) {
         rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100));
     }
