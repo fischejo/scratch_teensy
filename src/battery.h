@@ -2,8 +2,6 @@
 #define BATTERY_H
 
 
-
-#include "time.h"
 #include <sensor_msgs/msg/battery_state.h>
 #include <micro_ros_utilities/string_utilities.h>
 
@@ -13,7 +11,7 @@
 
 class Battery {
 private:
-    int voltage;
+    int voltage; // TODO switch to float
     unsigned long prev_low_voltage_time;
     bool low_voltage_detected = false;
     float level;
@@ -32,7 +30,7 @@ public:
     void setVoltage(int voltage) {
         this->voltage = voltage;
 
-        if(voltage > 0 ) {
+        if(voltage > 30 ) {
             if(voltage <= LOW_VOLTAGE) {
                 if(!low_voltage_detected) {
                     prev_low_voltage_time = millis();
@@ -56,10 +54,6 @@ public:
     };
 
     sensor_msgs__msg__BatteryState *getMsg() {
-        struct timespec time_stamp = getTime();
-
-        msg.header.stamp.sec = time_stamp.tv_sec;
-        msg.header.stamp.nanosec = time_stamp.tv_nsec;
         msg.voltage = voltage;
         msg.present = true;
 

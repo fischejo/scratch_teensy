@@ -23,10 +23,6 @@ imu::Vector<3> Imu::getEuler() {
 };
 
 sensor_msgs__msg__Imu *Imu::getMsg() {
-        struct timespec time_stamp = getTime();
-        msg.header.stamp.sec = time_stamp.tv_sec;
-        msg.header.stamp.nanosec = time_stamp.tv_nsec;
-
         imu::Quaternion quat = bno.getQuat();
 
         msg.orientation.w = quat.w();

@@ -1,16 +1,18 @@
 #include "odrive.h"
+
+
 #include <Arduino.h>
-#include <FlexCAN_T4.h>
 #include "ODriveCanbusTranslator.h"
+#include <FlexCAN_T4.h>
+
+#define Log Serial2
 
 
-class UserImplementedClass : public ODriveCanbusTranslator<CAN_message_t>
-{
-public:
-    CONSTRUCTORS(UserImplementedClass)
+class UserImplementedClass : public ODriveCanbusTranslator<CAN_message_t> {
+    public:
+        CONSTRUCTORS(UserImplementedClass)
 
-    CAN_message_t pack(uint32_t id, uint8_t len, const uint8_t *buf, bool rtr)
-    {
+    CAN_message_t pack(uint32_t id, uint8_t len, const uint8_t *buf, bool rtr) {
         CAN_message_t msg;
         msg.id = id;
         msg.len = len;
@@ -20,70 +22,83 @@ public:
     }
 };
 
-uint32_t node_ids[] = {0, 1};
-UserImplementedClass odrive(node_ids, 2);
-FlexCAN_T4<CAN3, RX_SIZE_256, TX_SIZE_16> Can0;
 
-void odrive_can_sniff(const CAN_message_t &msg)
+
+static uint32_t node_ids[2] = {0,1};
+static FlexCAN_T4<CAN3, RX_SIZE_256, TX_SIZE_16> can;
+static UserImplementedClass odrive(node_ids, 2);
+
+void receive(const CAN_message_t &msg)
 {
     odrive.filter(msg.id, msg.len, msg.buf);
 }
 
-
-
-bool odrive_init() {
-    Can0.begin();
-    Can0.setBaudRate(250000);
-    Can0.setMaxMB(16);  
-    Can0.enableFIFO();
-    Can0.enableFIFOInterrupt();
-    Can0.onReceive(odrive_can_sniff);
-    Can0.mailboxStatus();    
-
-    Can0.write(odrive(0).RebootOdrive());
+bool Odrive::begin() {
+    can.begin();
+    can.setBaudRate(250000);
+    can.setMaxMB(16);  
+    can.enableFIFO();
+    can.enableFIFOInterrupt();
+    can.onReceive(receive);
+    can.mailboxStatus();    
+    
+    can.write(odrive(0).RebootOdrive());
+    delay(1);
+    //
     return true; // TODO ensure that odrive works
 }
 
-void odrive_start() {
-    Can0.write(odrive(0).SetAxisRequestedState(AXIS_STATE_CLOSED_LOOP_CONTROL));
-    Can0.write(odrive(1).SetAxisRequestedState(AXIS_STATE_CLOSED_LOOP_CONTROL));
 
+void Odrive::start() {
+    can.write(odrive(0).SetAxisRequestedState(AXIS_STATE_CLOSED_LOOP_CONTROL));
+    delay(1);
+    can.write(odrive(0).SetControllerModes(CONTROL_MODE_VELOCITY_CONTROL, INPUT_MODE_PASSTHROUGH));
+    delay(1);
+    can.write(odrive(1).SetAxisRequestedState(AXIS_STATE_CLOSED_LOOP_CONTROL));
+    delay(1);
+    can.write(odrive(1).SetControllerModes(CONTROL_MODE_VELOCITY_CONTROL, INPUT_MODE_PASSTHROUGH));
+    delay(1);
 }
 
-void odrive_stop() {
-    Can0.write(odrive(0).SetAxisRequestedState(AXIS_STATE_IDLE));
-    Can0.write(odrive(1).SetAxisRequestedState(AXIS_STATE_IDLE));
 
+void Odrive::stop() {
+    can.write(odrive(0).SetAxisRequestedState(AXIS_STATE_IDLE));
+    can.write(odrive(1).SetAxisRequestedState(AXIS_STATE_IDLE));
+}   
+
+
+void Odrive::setVelocity(float left, float right) {
+    //Log.println(odrive(0).Heartbeat.state == AXIS_STATE_CLOSED_LOOP_CONTROL);
+    can.write(odrive(0).SetInputVel(left));
+    delay(1);
+    can.write(odrive(1).SetInputVel(-right));
+    delay(1);
 }
 
-void odrive_set_velocity(float left, float right) {
-    Can0.write(odrive(0).SetInputVel(left));
-    Can0.write(odrive(1).SetInputVel(-right));
-}
 
-void odrive_update(odrive_state_t *state) {
+void Odrive::update() {
     // odrive
-    Can0.write(odrive(0).GetVbusVoltage());
-    Can0.events();
+    can.write(odrive(0).GetVbusVoltage());
+    can.events();
 
-    Can0.write(odrive(0).GetEncoderEstimates());
-    Can0.write(odrive(1).GetEncoderEstimates());
-    Can0.events();
+    can.write(odrive(0).GetEncoderEstimates());
+    can.write(odrive(1).GetEncoderEstimates());
+    can.events();
 
-    Can0.write(odrive(0).GetMotorError());
-    Can0.write(odrive(1).GetMotorError());
-    Can0.events();
+    can.write(odrive(0).GetMotorError());
+    can.write(odrive(1).GetMotorError());
+    can.events();
 
-    Can0.write(odrive(0).GetEncoderError());
-    Can0.write(odrive(1).GetEncoderError());    
+    can.write(odrive(0).GetEncoderError());
+    can.write(odrive(1).GetEncoderError());    
     
-    Can0.events();
+    can.events();
 
-    state->voltage = odrive(0).GetVbusVoltage.vbus;
-    state->estimated_left_velocity = odrive(0).GetEncoderEstimates.vel;
-    state->estimated_right_velocity = -odrive(1).GetEncoderEstimates.vel;
-    state->motor_error = (odrive(0).GetMotorError.error == MOTOR_ERROR_NONE &&
-                          odrive(1).GetMotorError.error == MOTOR_ERROR_NONE) ? false : true;
-    state->encoder_error = (odrive(0).GetEncoderError.error == ENCODER_ERROR_NONE &&
-                            odrive(1).GetEncoderError.error == ENCODER_ERROR_NONE) ? false : true;
+    this->voltage = odrive(0).GetVbusVoltage.vbus;
+    this->estimated_left_velocity = odrive(0).GetEncoderEstimates.vel;
+    this->estimated_right_velocity = -odrive(1).GetEncoderEstimates.vel;
+    this->motor_error = odrive(0).GetMotorError.error != MOTOR_ERROR_NONE ||
+                        odrive(1).GetMotorError.error != MOTOR_ERROR_NONE;
+    this->encoder_error = odrive(0).GetEncoderError.error != ENCODER_ERROR_NONE ||
+                          odrive(1).GetEncoderError.error != ENCODER_ERROR_NONE;
 }

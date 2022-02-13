@@ -17,6 +17,7 @@ enum control_error_t {
     ODRIVE_INIT,
     ROS_INIT,
     ROS_EXECUTOR,
+    OBSTACLE_INIT,
     ODRIVE_ENCODER_ERROR,
     ODRIVE_MOTOR_ERROR,
     POSITION_BACK, // auf die Rückseite gefallen
