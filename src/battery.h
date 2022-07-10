@@ -1,6 +1,7 @@
 #ifndef BATTERY_H
 #define BATTERY_H
 
+#define Log Serial2
 
 #include <sensor_msgs/msg/battery_state.h>
 #include <micro_ros_utilities/string_utilities.h>
@@ -19,16 +20,13 @@ private:
 
     sensor_msgs__msg__BatteryState msg;
 
-    float calculate_level(int voltage) {
-        // right now, just a direct mapping
-        return (float) (voltage - MIN_VOLTAGE) / (float) (MAX_VOLTAGE - MIN_VOLTAGE);
-    }
 
 public:
     Battery() {};
 
     void setVoltage(int voltage) {
         this->voltage = voltage;
+        this->level = (float) (voltage - MIN_VOLTAGE) / (float) (MAX_VOLTAGE - MIN_VOLTAGE);
 
         if(voltage > 30 ) {
             if(voltage <= LOW_VOLTAGE) {
@@ -55,6 +53,7 @@ public:
 
     sensor_msgs__msg__BatteryState *getMsg() {
         msg.voltage = voltage;
+        msg.percentage = level;
         msg.present = true;
 
         return &msg;

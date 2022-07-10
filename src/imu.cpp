@@ -1,5 +1,7 @@
 #include "imu.h"
 
+#define Log Serial2
+
 Imu::Imu(): bno(55, 0x28, &Wire2) {
     msg.header.frame_id = micro_ros_string_utilities_set(msg.header.frame_id, "imu_link");
 
@@ -15,11 +17,22 @@ Imu::Imu(): bno(55, 0x28, &Wire2) {
 };
 
 bool Imu::begin() {
-    return bno.begin();
+
+    if(!bno.begin()) 
+        return false;
+
+    
+    // following axis remapping does not make sense,
+    // but without, the euler values are not correct.
+    bno.setAxisRemap(Adafruit_BNO055::REMAP_CONFIG_P6);
+    bno.setAxisSign(Adafruit_BNO055::REMAP_SIGN_P6);
+    return true;
 };
 
 imu::Vector<3> Imu::getEuler() {
-    return bno.getVector(Adafruit_BNO055::VECTOR_EULER);
+    // Beware of broken Euler angles from the BNO055! Read its quaternion instead.
+    // .getVector(Adafruit_BNO055::VECTOR_EULER) ...shows wrong values
+    return bno.getQuat().toEuler();
 };
 
 sensor_msgs__msg__Imu *Imu::getMsg() {

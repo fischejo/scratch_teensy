@@ -7,12 +7,14 @@ enum control_state_t {
     DISCONNECTED, // keine Verbindung zu ROS
     LOW_BATTERY, // zu niedriger Batteriestand    
     IDLE, // Nicht aktiv, aber eine Verbindung zu ROS, Roboter sitzt
+    MEASURE,
     RUNNING, // aktiv & Verbindung zu ROS, Roboter ist aufgestanden
     BLOCKED, // aktiv aber etwas verhindert die freie Bewegung
     ERROR, // Ein Fehler ist aufgetreten
 };
 
 enum control_error_t {
+    ERROR_UNKNOWN = 0,
     IMU_INIT,
     ODRIVE_INIT,
     ROS_INIT,
@@ -20,6 +22,7 @@ enum control_error_t {
     OBSTACLE_INIT,
     ODRIVE_ENCODER_ERROR,
     ODRIVE_MOTOR_ERROR,
+    ODRIVE_AXIS_ERROR,
     POSITION_BACK, // auf die Rückseite gefallen
     POSITION_FRONT, // auf die Vorderseite gefallen
     STUCK // räder drehen sich, aber keine IMU Bewegung

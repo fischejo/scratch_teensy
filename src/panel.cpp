@@ -1,5 +1,8 @@
 #include "panel.h"
 
+
+#define Log Serial2
+
 Panel::Panel()
 : 
     display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire1, -1),
@@ -36,6 +39,10 @@ void Panel::update(control_state_t state, float battery_level) {
         msg = String("IDLE");
         analogWrite(GPIO_LED, 50);
         break;
+    case MEASURE:
+        msg = String("MEASURE");
+        analogWrite(GPIO_LED, 255);
+        break;        
     case LOW_BATTERY:
         msg = String("LOW BAT");
         analogWrite(GPIO_LED, 50);
@@ -56,7 +63,9 @@ void Panel::update(control_state_t state, float battery_level) {
         msg = String(state);
         break;
     }
-    String msg_bat = String(battery_level*100, 0) + String("%");
+
+    int level = battery_level*100;
+    String msg_bat = String(level, DEC) + String("%");
 
     display.clearDisplay(); 
     display.setTextColor(SSD1306_WHITE); 
