@@ -31,33 +31,30 @@ void Panel::update(control_state_t state, float battery_level) {
     String msg;
     switch (state)
     {
-    case DISCONNECTED:
+    case STATE_DISCONNECTED:
         msg = String("NO CONN.");
         analogWrite(GPIO_LED, 0);
         break;
-    case IDLE:
+    case STATE_IDLE:
         msg = String("IDLE");
         analogWrite(GPIO_LED, 50);
         break;
-    case MEASURE:
+    case STATE_MEASURE:
         msg = String("MEASURE");
         analogWrite(GPIO_LED, 255);
         break;        
-    case LOW_BATTERY:
+    case STATE_LOW_BATTERY:
         msg = String("LOW BAT");
         analogWrite(GPIO_LED, 50);
         break;
-    case RUNNING:
+    case STATE_RUNNING:
         msg = String("RUN");
         analogWrite(GPIO_LED, 255);
         break;
-    case BLOCKED:
-        msg = String("BLOCKED");
-        break;
-    case ERROR:
+    case STATE_ERROR:
         msg = String("ERROR");
         break;
-    case INIT:
+    case STATE_INIT:
         msg = String("INIT");
     default:
         msg = String(state);

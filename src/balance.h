@@ -17,21 +17,18 @@ public:
 
 class Balance {
 public:
-    PIDController pid_cog;
     PIDController pid_balance;
     
     PIDParameter &param;
-    PIDParameter &param_cog;
 
     double angle;
     double velocity;
-    Balance(PIDParameter &param, PIDParameter &cog);
+    Balance(PIDParameter &param);
 
-    double position;
-
-    void tune(PIDParameter &param, PIDParameter &cog);
-
-    double update(imu::Vector<3> euler, double position);
+    void tune(PIDParameter &param_balance);
+    void reset_position();
+    double update(imu::Vector<3> euler);
+    bool is_fall_over();
 
 };
 

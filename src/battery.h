@@ -3,6 +3,7 @@
 
 #define Log Serial2
 
+#include <core_pins.h> 
 #include <sensor_msgs/msg/battery_state.h>
 #include <micro_ros_utilities/string_utilities.h>
 
